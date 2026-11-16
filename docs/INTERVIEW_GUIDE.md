@@ -1,0 +1,153 @@
+# Interview guide
+
+How to present this project, and answers to the questions it will draw. Every claim here points
+to code, a test or a measured number, so you can back it up live.
+
+## The 30-second version
+
+> "I built a multi-tenant RAG service on Spring Boot and Spring AI that is designed around how RAG
+> fails in production rather than the happy path. Every answer cites numbered sources and is
+> verified before it's returned: citations must exist, and every number must appear in the
+> evidence. When retrieval finds nothing relevant it declines without calling the LLM.
+> Re-ingesting a document swaps versions atomically, so there's never a half-indexed document,
+> and the cache keys on a corpus version, so it can't serve stale answers. A golden-set evaluation
+> runs in CI and fails the build if retrieval regresses."
+
+## The 2-minute walkthrough (draw this)
+
+1. **Ingest** (async, bounded queue):
+   - Hash for dedup.
+   - Parse: PDF pages and Markdown sections become citation metadata.
+   - Redact PII before anything is stored or sent to a provider.
+   - Parent/child chunking: embed small chunks, show the model big ones.
+   - Write the new version inactive, then one transaction swaps versions and bumps the corpus version.
+2. **Query:**
+   - Rewrite follow-ups into standalone questions, then check the cache (keyed by corpus version).
+   - Hybrid search: pgvector plus Postgres full-text, fused with RRF.
+   - Rerank, then score confidence.
+   - If confidence is weak, reformulate and retry once. If there is no evidence, decline.
+   - Expand to parent passages under a token budget, generate with numbered sources, verify, trace.
+3. **Measure:**
+   - 37-question golden set: recall@k, MRR and nDCG per retrieval mode, plus abstention metrics.
+   - Runs in CI with baselines.
+
+## Questions you should expect
+
+**Why Spring AI and not LangChain?**
+The model call is the easy 10%. The rest is transactions, authorisation, back-pressure, metrics and
+testability, and the JVM stack handles those well. I used Spring AI for the provider-neutral
+`ChatModel` and `EmbeddingModel` and the document readers, and wrote retrieval, confidence and
+verification myself, because those are the decisions I need to control and unit-test. The cost is
+a smaller ecosystem. I call the cross-encoder over HTTP and wrote a small evaluation harness.
+(ADR 0001)
+
+**Why pgvector instead of Pinecone, Weaviate or Qdrant?**
+I need vectors, full-text search and document metadata in one transaction for the version swap.
+At millions of chunks pgvector's HNSW is fine. The known weakness is filtered ANN under-returning
+for small tenants, which I handle with pgvector 0.8's iterative scan. The `KnowledgeStore` port
+means moving to a dedicated engine is one adapter. (ADR 0002)
+
+**Why hybrid search? Why RRF?**
+Embeddings miss exact identifiers and BM25 misses paraphrases. In my evaluation, vector-only missed
+an error-code question that hybrid found. RRF fuses by rank, so I don't need to normalise cosine
+against ts_rank. That would need per-corpus tuning and is unstable with few candidates. One detail
+that matters: Postgres `plainto_tsquery` ANDs all terms, so I build an OR query and let `ts_rank_cd`
+reward matching more of them. (ADR 0003)
+
+**Your own numbers show keyword-only beating hybrid. Doesn't that undercut you?**
+It's what I'd expect from the offline embedding, which is a hashing embedding and therefore
+lexical. I report it instead of hiding it. The point of the harness is that the hybrid claim is
+re-measured per embedding model with one command, instead of being asserted.
+
+**How do you decide when not to answer?**
+Every hit keeps its scores separately. RRF scores are about 0.03 whatever the relevance, so they
+are never used for confidence. I measured raw cosine as a confidence signal and it failed: an
+off-topic question outscored 15 answerable ones. Without a reranker I use evidence coverage, the
+share of query terms (identifiers weighted double) present in the top evidence. With a
+cross-encoder I use its calibrated score. If confidence is NONE, the service declines and never
+calls the LLM. The offline result is 3/3 off-topic questions declined and 3/34 answerable ones
+wrongly declined, all paraphrases. That's my quantified argument for the reranker. (ADR 0005)
+
+**How do you prevent hallucinations?**
+In layers:
+1. The prompt requires a citation on every sentence, numbers copied exactly, and refusal when the
+   answer is absent. Sources are marked as untrusted data, and a source cannot close its own tag.
+2. A deterministic verifier runs on every answer. Citations must exist, and every number must
+   appear in the evidence, with normalisation so 1,250 equals 1250.
+3. Failures get a user-visible notice and are not cached.
+4. Semantic faithfulness (an LLM judge) runs offline, where its cost doesn't hit users. (ADR 0007)
+
+**What happens when someone re-uploads a document while it's being queried?**
+- The new version is written inactive, and the old one keeps serving.
+- Activation is one transaction: supersede old, activate new, bump the corpus version. A partial
+  unique index makes two active versions impossible.
+- If embedding fails halfway, only the new version is discarded and marked FAILED with the reason.
+- A crash mid-ingest is cleaned up at startup. (ADR 0006)
+
+**How is the cache invalidated?**
+It isn't, explicitly. Each space has a monotonic corpus version that every activation or deletion
+bumps, and cache entries are scoped by `space@version`, so stale entries just stop matching. No
+purge, and no race between "ingest done" and "cache cleared". The key is the standalone question,
+so two conversations asking "and for annual plans?" can't collide.
+
+**How do you handle multi-tenancy?**
+The API key determines the spaces. The request can narrow them but never widen them, and anything
+else is a 403. Space ids are normalised in one value object, because a casing mismatch between
+ingest and query is a real bug I've seen. Multi-space filters use `= ANY`, never ANDed equality,
+and a contract test proves it on both stores. Traces and conversation memory are per principal.
+(ADR 0008)
+
+**How do follow-up questions work?**
+History plus the follow-up goes to the LLM, which returns a standalone question. Retrieval,
+caching and tracing all use that form. First questions skip the call to save latency. Offline,
+a heuristic carries the previous question's terms into dependent follow-ups.
+
+**How would you scale this?**
+- The app is stateless except for conversation memory and the cache. Move both to Redis; each is
+  one class, and correctness doesn't depend on it because invalidation is by version.
+- Ingestion moves to a queue (SQS or Kafka) when there are multiple instances. The document table
+  is already the job record.
+- Partition chunks by space, or move to a dedicated vector engine, past about 50M chunks.
+- Streaming uses virtual threads, so held connections are cheap.
+
+**How do you know it works in production?**
+- Per-stage Micrometer timers (`rag.stage{stage}`) and answer counters by confidence, grounded
+  and cached, plus Spring AI's token-usage observations.
+- Every answer stores a trace: chunk ids, scores, verification, timings.
+- Thumbs-down feedback links to the exact evidence, which is how the golden set should grow.
+
+**Tell me about a bug you found.**
+The UI showed "network error" after every streamed answer, even though the tests passed. When an
+SSE stream completes, Spring re-dispatches the request as ASYNC. My API-key filter, a
+`OncePerRequestFilter`, skips async dispatches by default, so Spring Security saw an anonymous
+request and aborted the response mid-chunk. MockMvc doesn't run that re-dispatch through the
+filter chain, which is why it passed. The fix is a one-line dispatcher-type rule. The real lesson
+is the test: I added one that streams over a real socket, and confirmed it fails without the fix.
+
+**What would you do next?**
+1. Run the evaluation with real models and a reranker, and grow the golden set from traces.
+2. An LLM-as-judge faithfulness sample in CI (nightly, not on every PR).
+3. OAuth2 and SSO group-to-space mapping, and per-document ACLs as a store pre-filter.
+4. Connectors (Confluence, SharePoint) with scheduled re-sync and deletion.
+5. Redis for memory and cache, and a queue for ingestion when scaling out.
+
+## Numbers to remember
+- **Query path:** 30 candidates from each search → RRF (k = 60) → top 6 → 3,000-token context budget.
+- **Chunk sizes:** parents 700 tokens, children 180, overlap 40.
+- **Evaluation set:** 37 golden questions, 8 documents, 2 spaces.
+- **Offline results:** hybrid recall@6 1.0 and MRR 0.89; 3/3 off-topic declined; 3/34 false
+  abstentions, all paraphrases.
+- **Tests:** about 80 executions across unit, contract (in-memory and Postgres), API, socket-level
+  streaming and the evaluation gate.
+
+## Live demo script (5 minutes)
+1. `./mvnw spring-boot:run`, open the UI, connect with the dev key, and upload `eval/corpus/product/*.md`.
+2. Ask "What does error NW-4291 mean?": an identifier found via the keyword leg, cited.
+3. Ask "Within how many days can a new annual customer get a full refund?", then follow up with
+   "and monthly plans?": follow-up rewriting.
+4. Ask "Which pizza toppings are served at the Austin office party?": declined, no LLM call (show
+   the timings: no `generate` stage).
+5. Ask the refund question again: answered from the cache. Re-upload an edited `refunds-and-cancellation.md`, ask
+   again: not cached, new content (corpus version).
+6. `curl /api/v1/answers/{id}` with the answer id: the full trace. Then show `target/eval-report.md` and the CI gate.
+7. Call `/api/v1/chat` with `spaces: ["finance"]`: 403.

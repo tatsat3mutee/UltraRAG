@@ -1,0 +1,14 @@
+# Architecture decision records
+
+Short records of decisions that shaped the design: context, decision, alternatives, consequences.
+
+| # | Decision |
+|---|---|
+| [0001](0001-spring-ai-over-python.md) | Spring Boot + Spring AI rather than Python + LangChain |
+| [0002](0002-postgres-pgvector.md) | Postgres + pgvector rather than a dedicated vector database |
+| [0003](0003-hybrid-retrieval-rrf.md) | Hybrid retrieval fused with Reciprocal Rank Fusion |
+| [0004](0004-parent-child-chunking.md) | Parent-child ("small-to-big") chunking |
+| [0005](0005-confidence-and-abstention.md) | Confidence policy and abstention without an LLM call |
+| [0006](0006-versioned-ingestion-and-state.md) | Versioned ingestion, corpus-version cache keys, where state lives |
+| [0007](0007-verify-every-answer.md) | Deterministic verification on every answer; LLM judge offline |
+| [0008](0008-tenancy-from-credentials.md) | Tenancy derived from credentials, failing closed |
