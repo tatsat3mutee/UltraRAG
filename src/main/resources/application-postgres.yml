@@ -1,0 +1,13 @@
+spring:
+  autoconfigure:
+    exclude: []
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/groundedrag}
+    username: ${DB_USER:groundedrag}
+    password: ${DB_PASSWORD:groundedrag}
+  flyway:
+    placeholders:
+      embedding_dimensions: ${rag.embedding.dimensions}
+
+rag:
+  store: postgres

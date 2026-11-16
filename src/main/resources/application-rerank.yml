@@ -1,0 +1,10 @@
+# Cross-encoder reranking (docker compose --profile rerank up starts BAAI/bge-reranker-base).
+# Confidence now thresholds the cross-encoder's sigmoid score instead of cosine similarity.
+rag:
+  rerank:
+    provider: tei
+    url: ${RERANK_URL:http://localhost:8081}
+  confidence:
+    high: 0.7
+    medium: 0.3
+    low: 0.08

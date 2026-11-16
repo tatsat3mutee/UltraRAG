@@ -1,0 +1,68 @@
+# Default profile: runs with zero infrastructure and no API keys (in-memory store, offline
+# hashing embeddings, extractive answers). Add profiles to switch on real components:
+#   postgres  - Postgres + pgvector store (Flyway-managed schema)
+#   openai    - OpenAI-compatible chat + embeddings (OpenAI, Groq, OpenRouter, vLLM, ...)
+#   ollama    - local Ollama chat + embeddings
+#   rerank    - cross-encoder reranking through text-embeddings-inference
+spring:
+  application:
+    name: grounded-rag
+  threads:
+    virtual:
+      enabled: true
+  servlet:
+    multipart:
+      max-file-size: 25MB
+      max-request-size: 26MB
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration
+      - org.springframework.boot.jdbc.autoconfigure.DataSourceTransactionManagerAutoConfiguration
+      - org.springframework.boot.jdbc.autoconfigure.JdbcTemplateAutoConfiguration
+      - org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration
+  ai:
+    model:
+      chat: none
+      embedding: none
+      image: none
+      audio:
+        speech: none
+        transcription: none
+      moderation: none
+
+rag:
+  store: memory
+  embedding:
+    provider: hashing
+    dimensions: 384
+  generation:
+    provider: extractive
+  # Evidence-coverage thresholds (no reranker). Chosen from eval/ score distributions, see docs/EVALUATION.md.
+  confidence:
+    high: 0.8
+    medium: 0.6
+    low: 0.42
+  security:
+    api-keys:
+      # Development keys only. In any shared environment supply keys via environment variables,
+      # e.g. RAG_SECURITY_APIKEYS_0_KEY, and remove these.
+      - name: demo-user
+        key: ${RAG_DEMO_KEY:dev-key-change-me-0001}
+        spaces: [handbook, product]
+      - name: admin
+        key: ${RAG_ADMIN_KEY:dev-admin-key-change-me}
+        spaces: ["*"]
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, metrics, prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+logging:
+  level:
+    io.groundedrag: INFO

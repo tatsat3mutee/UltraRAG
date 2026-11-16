@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Grounded RAG</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><img src="favicon.svg" alt="" width="22" height="22"> Grounded RAG</div>
+  <form id="key-form" class="key">
+    <label for="api-key">API key</label>
+    <input id="api-key" type="password" autocomplete="off" placeholder="X-API-Key">
+    <button type="submit">Connect</button>
+  </form>
+</header>
+
+<main class="layout">
+  <aside class="panel docs">
+    <h2>Spaces</h2>
+    <div id="spaces" class="chips" aria-label="Spaces to search"></div>
+    <form id="upload-form" class="upload">
+      <select id="upload-space" aria-label="Space to upload into"></select>
+      <input id="upload-file" type="file" accept=".pdf,.docx,.doc,.pptx,.html,.htm,.md,.markdown,.txt,.csv">
+      <button type="submit">Upload</button>
+    </form>
+    <ul id="documents" class="doc-list"></ul>
+  </aside>
+
+  <section class="panel chat">
+    <div id="messages" class="messages" aria-live="polite">
+      <p class="hint">Connect with an API key, upload a document, then ask a question. Every answer cites its sources and is checked against them.</p>
+    </div>
+    <form id="ask-form" class="ask">
+      <textarea id="question" rows="2" maxlength="2000" placeholder="Ask about your documents..." required></textarea>
+      <button type="submit">Ask</button>
+    </form>
+  </section>
+
+  <aside class="panel sources">
+    <h2>Sources</h2>
+    <ol id="sources" class="source-list"><li class="hint">Sources for the latest answer appear here.</li></ol>
+  </aside>
+</main>
+<script src="app.js"></script>
+</body>
+</html>
