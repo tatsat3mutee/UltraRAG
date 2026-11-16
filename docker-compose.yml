@@ -1,0 +1,50 @@
+# docker compose up                      -> app + Postgres/pgvector, offline models
+# docker compose --profile ollama up     -> + local LLM and embeddings (set APP_PROFILES=postgres,ollama)
+# docker compose --profile rerank up     -> + cross-encoder reranker (add ",rerank" to APP_PROFILES)
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: groundedrag
+      POSTGRES_USER: groundedrag
+      POSTGRES_PASSWORD: groundedrag
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U groundedrag"]
+      interval: 5s
+      retries: 10
+
+  app:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: ${APP_PROFILES:-postgres}
+      DB_URL: jdbc:postgresql://postgres:5432/groundedrag
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com}
+      OLLAMA_BASE_URL: http://ollama:11434
+      RERANK_URL: http://reranker:80
+      RAG_DEMO_KEY: ${RAG_DEMO_KEY:-dev-key-change-me-0001}
+      RAG_ADMIN_KEY: ${RAG_ADMIN_KEY:-dev-admin-key-change-me}
+    ports: ["8080:8080"]
+
+  ollama:
+    profiles: [ollama]
+    image: ollama/ollama:0.12.6
+    ports: ["11434:11434"]
+    volumes: [ollama:/root/.ollama]
+
+  reranker:
+    profiles: [rerank]
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
+    command: --model-id BAAI/bge-reranker-base
+    ports: ["8081:80"]
+    volumes: [hf:/data]
+
+volumes:
+  pgdata:
+  ollama:
+  hf:
