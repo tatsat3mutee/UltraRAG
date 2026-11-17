@@ -11,7 +11,6 @@ import io.groundedrag.cache.SemanticCache;
 import io.groundedrag.chat.ChatAnswer;
 import io.groundedrag.chat.ConversationMemory;
 import io.groundedrag.chat.RagService;
-import io.groundedrag.config.RagProperties;
 import io.groundedrag.domain.DocumentRecord;
 import io.groundedrag.domain.SpaceId;
 import io.groundedrag.generation.AnswerGenerator;
@@ -29,6 +28,8 @@ import io.groundedrag.retrieval.Embedder;
 import io.groundedrag.retrieval.HashingEmbeddingModel;
 import io.groundedrag.retrieval.HybridRetriever;
 import io.groundedrag.retrieval.NoopReranker;
+import io.groundedrag.retrieval.RetrievalMode;
+import io.groundedrag.retrieval.RetrievalSettings;
 import io.groundedrag.store.InMemoryKnowledgeStore;
 import io.groundedrag.store.KnowledgeStore;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -38,8 +39,8 @@ import org.springframework.ai.tokenizer.JTokkitTokenCountEstimator;
 public final class Fixtures {
 
     public static final JTokkitTokenCountEstimator TOKENS = new JTokkitTokenCountEstimator();
-    public static final RagProperties.Retrieval RETRIEVAL = new RagProperties.Retrieval("hybrid", 30, 6, 60, 0.9);
-    public static final RagProperties.Confidence CONFIDENCE = new RagProperties.Confidence(0.8, 0.6, 0.42, true);
+    public static final RetrievalSettings RETRIEVAL = new RetrievalSettings(RetrievalMode.HYBRID, 30, 6, 60, 0.9);
+    public static final RetrievalSettings.Thresholds CONFIDENCE = new RetrievalSettings.Thresholds(0.8, 0.6, 0.42);
 
     public final KnowledgeStore store;
     public final Embedder embedder = new Embedder(new HashingEmbeddingModel(384), HashingEmbeddingModel.MODEL_NAME, 384, 16);

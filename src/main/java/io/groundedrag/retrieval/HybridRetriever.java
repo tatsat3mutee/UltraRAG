@@ -8,8 +8,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.Executor;
+import java.util.function.Supplier;
 
-import io.groundedrag.config.RagProperties;
 import io.groundedrag.domain.RetrievedChunk;
 import io.groundedrag.domain.SpaceId;
 import io.groundedrag.domain.TextAnalyzer;
@@ -28,27 +31,40 @@ public class HybridRetriever {
 
     private final KnowledgeStore store;
     private final Reranker reranker;
-    private final RagProperties.Retrieval cfg;
-    private final RagProperties.Confidence thresholds;
+    private final RetrievalSettings cfg;
+    private final RetrievalSettings.Thresholds thresholds;
+    private final Executor executor;
 
-    public HybridRetriever(KnowledgeStore store, Reranker reranker, RagProperties.Retrieval cfg,
-            RagProperties.Confidence thresholds) {
+    public HybridRetriever(KnowledgeStore store, Reranker reranker, RetrievalSettings cfg,
+            RetrievalSettings.Thresholds thresholds) {
+        this(store, reranker, cfg, thresholds, Runnable::run);
+    }
+
+    /**
+     * @param executor runs the vector and keyword legs concurrently, so retrieval costs the
+     *                 slower leg rather than the sum (virtual threads in the application).
+     */
+    public HybridRetriever(KnowledgeStore store, Reranker reranker, RetrievalSettings cfg,
+            RetrievalSettings.Thresholds thresholds, Executor executor) {
         this.store = store;
         this.reranker = reranker;
         this.cfg = cfg;
         this.thresholds = thresholds;
+        this.executor = executor;
     }
 
     public RetrievalResult retrieve(String query, float[] queryEmbedding, Set<SpaceId> spaces) {
-        return retrieve(query, queryEmbedding, spaces, RetrievalMode.parse(cfg.mode()), cfg.topK());
+        return retrieve(query, queryEmbedding, spaces, cfg.mode(), cfg.topK());
     }
 
     public RetrievalResult retrieve(String query, float[] queryEmbedding, Set<SpaceId> spaces,
             RetrievalMode mode, int topK) {
-        List<RetrievedChunk> vector = mode == RetrievalMode.KEYWORD ? List.of()
-                : store.vectorSearch(spaces, queryEmbedding, cfg.candidateK());
-        List<RetrievedChunk> keyword = mode == RetrievalMode.VECTOR ? List.of()
-                : store.keywordSearch(spaces, query, queryEmbedding, cfg.candidateK());
+        CompletableFuture<List<RetrievedChunk>> vectorLeg = leg(mode != RetrievalMode.KEYWORD,
+                () -> store.vectorSearch(spaces, queryEmbedding, cfg.candidateK()));
+        CompletableFuture<List<RetrievedChunk>> keywordLeg = leg(mode != RetrievalMode.VECTOR,
+                () -> store.keywordSearch(spaces, query, queryEmbedding, cfg.candidateK()));
+        List<RetrievedChunk> vector = join(vectorLeg);
+        List<RetrievedChunk> keyword = join(keywordLeg);
 
         List<RetrievedChunk> fused = reciprocalRankFusion(List.of(vector, keyword), cfg.rrfK());
         List<RetrievedChunk> distinct = dropNearDuplicates(fused, cfg.dedupJaccard());
@@ -56,6 +72,21 @@ public class HybridRetriever {
 
         double score = reranker.confidence(query, ranked);
         return new RetrievalResult(query, ranked, score, classify(score));
+    }
+
+    private CompletableFuture<List<RetrievedChunk>> leg(boolean enabled, Supplier<List<RetrievedChunk>> search) {
+        return enabled ? CompletableFuture.supplyAsync(search, executor) : CompletableFuture.completedFuture(List.of());
+    }
+
+    private static List<RetrievedChunk> join(CompletableFuture<List<RetrievedChunk>> f) {
+        try {
+            return f.join();
+        } catch (CompletionException e) {
+            if (e.getCause() instanceof RuntimeException re) {
+                throw re;
+            }
+            throw e;
+        }
     }
 
     public ConfidenceLevel classify(double score) {

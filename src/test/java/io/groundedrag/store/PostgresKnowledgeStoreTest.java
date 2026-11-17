@@ -26,8 +26,20 @@ class PostgresKnowledgeStoreTest extends KnowledgeStoreContract {
     @Autowired
     KnowledgeStore store;
 
+    @Autowired
+    io.groundedrag.observability.TraceStore traces;
+
     @Override
     protected KnowledgeStore store() {
         return store;
+    }
+
+    /** The trace contract against JSONB storage, sharing this container and context. */
+    @org.junit.jupiter.api.Nested
+    class Traces extends io.groundedrag.observability.TraceStoreContract {
+        @Override
+        protected io.groundedrag.observability.TraceStore store() {
+            return traces;
+        }
     }
 }

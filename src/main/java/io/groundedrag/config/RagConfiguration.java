@@ -29,6 +29,8 @@ import io.groundedrag.retrieval.HashingEmbeddingModel;
 import io.groundedrag.retrieval.HybridRetriever;
 import io.groundedrag.retrieval.NoopReranker;
 import io.groundedrag.retrieval.Reranker;
+import io.groundedrag.retrieval.RetrievalMode;
+import io.groundedrag.retrieval.RetrievalSettings;
 import io.groundedrag.retrieval.TeiReranker;
 import io.groundedrag.store.InMemoryKnowledgeStore;
 import io.groundedrag.store.JdbcKnowledgeStore;
@@ -170,9 +172,21 @@ public class RagConfiguration {
 
     // ---------- query ----------
 
+    /** Virtual threads: the two search legs block on I/O, so a thread each is free. */
+    @Bean(destroyMethod = "shutdown")
+    java.util.concurrent.ExecutorService retrievalExecutor() {
+        return java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
+    }
+
     @Bean
-    HybridRetriever hybridRetriever(RagProperties props, KnowledgeStore store, Reranker reranker) {
-        return new HybridRetriever(store, reranker, props.retrieval(), props.confidence());
+    HybridRetriever hybridRetriever(RagProperties props, KnowledgeStore store, Reranker reranker,
+            java.util.concurrent.ExecutorService retrievalExecutor) {
+        RagProperties.Retrieval r = props.retrieval();
+        RagProperties.Confidence c = props.confidence();
+        return new HybridRetriever(store, reranker,
+                new RetrievalSettings(RetrievalMode.parse(r.mode()), r.candidateK(), r.topK(), r.rrfK(), r.dedupJaccard()),
+                new RetrievalSettings.Thresholds(c.high(), c.medium(), c.low()),
+                retrievalExecutor);
     }
 
     @Bean
