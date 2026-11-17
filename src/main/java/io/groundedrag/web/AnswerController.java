@@ -5,7 +5,7 @@ import java.util.UUID;
 
 import io.groundedrag.observability.AnswerTrace;
 import io.groundedrag.observability.TraceStore;
-import io.groundedrag.security.ApiKeyPrincipal;
+import io.groundedrag.security.Caller;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpStatus;
@@ -26,7 +26,7 @@ class AnswerController {
     record Feedback(int rating, @Size(max = 2000) String comment) {
     }
 
-    record Me(String name, Set<String> spaces) {
+    record Me(String name, Set<String> spaces, String authMethod) {
     }
 
     private final TraceStore traces;
@@ -36,20 +36,20 @@ class AnswerController {
     }
 
     @GetMapping("/me")
-    Me me(@AuthenticationPrincipal ApiKeyPrincipal principal) {
-        return new Me(principal.name(), principal.spaces());
+    Me me(@AuthenticationPrincipal Caller principal) {
+        return new Me(principal.name(), principal.spaces(), principal.method());
     }
 
     /** The full trace behind an answer: chunk ids, scores, verification and stage timings. */
     @GetMapping("/answers/{id}")
-    AnswerTrace trace(@AuthenticationPrincipal ApiKeyPrincipal principal, @PathVariable UUID id) {
+    AnswerTrace trace(@AuthenticationPrincipal Caller principal, @PathVariable UUID id) {
         return traces.find(id)
                 .filter(t -> t.principal().equals(principal.name()))
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
     }
 
     @PostMapping("/answers/{id}/feedback")
-    ResponseEntity<Void> feedback(@AuthenticationPrincipal ApiKeyPrincipal principal, @PathVariable UUID id,
+    ResponseEntity<Void> feedback(@AuthenticationPrincipal Caller principal, @PathVariable UUID id,
             @Valid @RequestBody Feedback feedback) {
         if (feedback.rating() != 1 && feedback.rating() != -1) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "rating must be 1 or -1");

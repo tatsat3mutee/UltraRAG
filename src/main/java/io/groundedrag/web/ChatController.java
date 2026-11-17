@@ -8,7 +8,7 @@ import java.util.concurrent.Executors;
 
 import io.groundedrag.chat.ChatAnswer;
 import io.groundedrag.chat.RagService;
-import io.groundedrag.security.ApiKeyPrincipal;
+import io.groundedrag.security.Caller;
 import io.groundedrag.security.SpaceAuthorizer;
 import jakarta.annotation.PreDestroy;
 import jakarta.validation.Valid;
@@ -45,7 +45,7 @@ class ChatController {
     }
 
     @PostMapping
-    ChatAnswer ask(@AuthenticationPrincipal ApiKeyPrincipal principal, @Valid @RequestBody ChatRequest req) {
+    ChatAnswer ask(@AuthenticationPrincipal Caller principal, @Valid @RequestBody ChatRequest req) {
         return rag.ask(toQuestion(principal, req));
     }
 
@@ -55,7 +55,7 @@ class ChatController {
      * evidence while the answer streams.
      */
     @PostMapping(path = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    SseEmitter stream(@AuthenticationPrincipal ApiKeyPrincipal principal, @Valid @RequestBody ChatRequest req) {
+    SseEmitter stream(@AuthenticationPrincipal Caller principal, @Valid @RequestBody ChatRequest req) {
         RagService.Question q = toQuestion(principal, req); // authorise before going async
         SseEmitter emitter = new SseEmitter(120_000L);
         streams.execute(() -> {
@@ -94,7 +94,7 @@ class ChatController {
         }
     }
 
-    private static RagService.Question toQuestion(ApiKeyPrincipal principal, ChatRequest req) {
+    private static RagService.Question toQuestion(Caller principal, ChatRequest req) {
         return new RagService.Question(principal.name(), SpaceAuthorizer.resolve(principal, req.spaces()),
                 req.question().strip(), req.conversationId());
     }

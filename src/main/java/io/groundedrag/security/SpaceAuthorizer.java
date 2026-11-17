@@ -16,7 +16,7 @@ public final class SpaceAuthorizer {
     private SpaceAuthorizer() {
     }
 
-    public static Set<SpaceId> resolve(ApiKeyPrincipal principal, Collection<String> requested) {
+    public static Set<SpaceId> resolve(Caller principal, Collection<String> requested) {
         Set<SpaceId> out = new TreeSet<>();
         if (requested == null || requested.isEmpty()) {
             if (principal.wildcard()) {
@@ -31,7 +31,7 @@ public final class SpaceAuthorizer {
         return out;
     }
 
-    public static SpaceId require(ApiKeyPrincipal principal, String raw) {
+    public static SpaceId require(Caller principal, String raw) {
         SpaceId space = SpaceId.of(raw);
         if (!principal.wildcard() && !principal.spaces().contains(space.value())) {
             throw new AccessDeniedException("No access to space '" + space + "'");

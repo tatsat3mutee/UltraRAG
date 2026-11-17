@@ -7,11 +7,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
 
-import io.groundedrag.config.RagProperties;
-import io.groundedrag.domain.SpaceId;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -26,24 +22,25 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * {@link MessageDigest#isEqual} (constant time). The key, not any request header or body field,
  * decides which spaces the caller can touch.
  *
- * <p>For SSO, replace this filter with Spring Security's OAuth2 resource server and map a token
- * claim (e.g. groups) to the same {@link ApiKeyPrincipal}; nothing downstream changes.
+ * <p>Runs alongside the OAuth2 resource server ({@link JwtCallerConverter}); both produce the same
+ * {@link Caller}, so nothing downstream knows or cares how the caller authenticated.
  */
 public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
 
     public static final String HEADER = "X-API-Key";
 
-    private final Map<String, ApiKeyPrincipal> principalsByDigest = new HashMap<>();
+    /** A configured key: who it identifies and which spaces it grants. */
+    public record Credential(String name, String key, java.util.Collection<String> spaces) {
+    }
 
-    public ApiKeyAuthenticationFilter(List<RagProperties.ApiKey> keys) {
-        for (RagProperties.ApiKey k : keys) {
+    private final Map<String, Caller> principalsByDigest = new HashMap<>();
+
+    public ApiKeyAuthenticationFilter(List<Credential> keys) {
+        for (Credential k : keys) {
             if (k.key() == null || k.key().length() < 16) {
                 throw new IllegalStateException("API key '" + k.name() + "' must be at least 16 characters");
             }
-            Set<String> spaces = k.spaces().stream()
-                    .map(s -> "*".equals(s) ? s : SpaceId.of(s).value())
-                    .collect(Collectors.toUnmodifiableSet());
-            principalsByDigest.put(digest(k.key()), new ApiKeyPrincipal(k.name(), spaces));
+            principalsByDigest.put(digest(k.key()), new Caller(k.name(), Caller.normaliseSpaces(k.spaces()), "api-key"));
         }
     }
 
@@ -52,7 +49,7 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         String presented = request.getHeader(HEADER);
         if (presented != null && !presented.isBlank()) {
-            ApiKeyPrincipal principal = lookup(presented.strip());
+            Caller principal = lookup(presented.strip());
             if (principal != null) {
                 var auth = new UsernamePasswordAuthenticationToken(principal, null,
                         List.of(new SimpleGrantedAuthority("ROLE_API")));
@@ -62,9 +59,9 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
         chain.doFilter(request, response);
     }
 
-    private ApiKeyPrincipal lookup(String presented) {
+    private Caller lookup(String presented) {
         String d = digest(presented);
-        for (Map.Entry<String, ApiKeyPrincipal> e : principalsByDigest.entrySet()) {
+        for (Map.Entry<String, Caller> e : principalsByDigest.entrySet()) {
             if (MessageDigest.isEqual(e.getKey().getBytes(StandardCharsets.US_ASCII),
                     d.getBytes(StandardCharsets.US_ASCII))) {
                 return e.getValue();

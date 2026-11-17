@@ -23,7 +23,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 /** Boots the real application (memory profile) and drives it through HTTP like a client would. */
-@SpringBootTest
+@SpringBootTest(properties = "rag.rate-limit.burst=1000")
 @AutoConfigureMockMvc
 class ApiIntegrationTest {
 

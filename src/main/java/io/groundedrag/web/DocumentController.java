@@ -7,7 +7,7 @@ import java.util.UUID;
 import io.groundedrag.domain.DocumentRecord;
 import io.groundedrag.domain.SpaceId;
 import io.groundedrag.ingestion.IngestionService;
-import io.groundedrag.security.ApiKeyPrincipal;
+import io.groundedrag.security.Caller;
 import io.groundedrag.security.SpaceAuthorizer;
 import io.groundedrag.store.KnowledgeStore;
 import org.springframework.http.HttpStatus;
@@ -37,7 +37,7 @@ class DocumentController {
 
     /** 202 + the QUEUED version to poll; 200 + the existing version when the bytes are already indexed. */
     @PostMapping(consumes = "multipart/form-data")
-    ResponseEntity<DocumentRecord> upload(@AuthenticationPrincipal ApiKeyPrincipal principal,
+    ResponseEntity<DocumentRecord> upload(@AuthenticationPrincipal Caller principal,
             @PathVariable String space, @RequestParam("file") MultipartFile file) throws IOException {
         SpaceId spaceId = SpaceAuthorizer.require(principal, space);
         if (file.isEmpty() || file.getOriginalFilename() == null) {
@@ -49,19 +49,19 @@ class DocumentController {
     }
 
     @GetMapping
-    List<DocumentRecord> list(@AuthenticationPrincipal ApiKeyPrincipal principal, @PathVariable String space) {
+    List<DocumentRecord> list(@AuthenticationPrincipal Caller principal, @PathVariable String space) {
         return store.listDocuments(SpaceAuthorizer.require(principal, space));
     }
 
     @GetMapping("/{id}")
-    DocumentRecord get(@AuthenticationPrincipal ApiKeyPrincipal principal, @PathVariable String space,
+    DocumentRecord get(@AuthenticationPrincipal Caller principal, @PathVariable String space,
             @PathVariable UUID id) {
         return store.findDocument(SpaceAuthorizer.require(principal, space), id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
     }
 
     @DeleteMapping("/{id}")
-    ResponseEntity<Void> delete(@AuthenticationPrincipal ApiKeyPrincipal principal, @PathVariable String space,
+    ResponseEntity<Void> delete(@AuthenticationPrincipal Caller principal, @PathVariable String space,
             @PathVariable UUID id) {
         boolean deleted = store.deleteDocument(SpaceAuthorizer.require(principal, space), id);
         return deleted ? ResponseEntity.noContent().build() : ResponseEntity.notFound().build();

@@ -17,7 +17,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
  * filter chain, so it could not catch the bug where completed SSE streams were cut off with
  * ERR_INCOMPLETE_CHUNKED_ENCODING. This test does.
  */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = "rag.rate-limit.burst=1000")
 class StreamingOverHttpTest {
 
     @LocalServerPort

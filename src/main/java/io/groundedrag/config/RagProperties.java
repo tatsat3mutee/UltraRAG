@@ -24,7 +24,8 @@ public record RagProperties(
         @DefaultValue Cache cache,
         @DefaultValue Ingestion ingestion,
         @DefaultValue Conversation conversation,
-        @DefaultValue Security security) {
+        @DefaultValue Security security,
+        @DefaultValue RateLimit rateLimit) {
 
     /** provider: hashing (offline, deterministic) or spring-ai (whatever EmbeddingModel Spring AI configured). */
     public record Embedding(
@@ -98,7 +99,30 @@ public record RagProperties(
             @DefaultValue("10000") int maxConversations) {
     }
 
-    public record Security(@DefaultValue List<ApiKey> apiKeys) {
+    public record Security(@DefaultValue List<ApiKey> apiKeys, @DefaultValue Jwt jwt) {
+    }
+
+    /**
+     * OIDC/JWT bearer tokens, enabled when issuer-uri (Keycloak, Okta, Entra ID, ...) or
+     * hmac-secret (shared-secret HS256, for service-to-service and tests) is set.
+     * The spaces claim may be a list or a space/comma separated string.
+     */
+    public record Jwt(
+            @DefaultValue("") String issuerUri,
+            @DefaultValue("") String hmacSecret,
+            @DefaultValue("") String audience,
+            @DefaultValue("spaces") String spacesClaim) {
+
+        public boolean enabled() {
+            return !issuerUri.isBlank() || !hmacSecret.isBlank();
+        }
+    }
+
+    /** Token bucket per caller for the expensive endpoints (chat and upload). */
+    public record RateLimit(
+            @DefaultValue("true") boolean enabled,
+            @DefaultValue("30") int requestsPerMinute,
+            @DefaultValue("10") int burst) {
     }
 
     /** spaces may contain "*" for an admin key that can address any space explicitly. */
