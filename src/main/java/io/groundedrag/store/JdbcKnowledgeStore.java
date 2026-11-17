@@ -207,11 +207,15 @@ public class JdbcKnowledgeStore implements KnowledgeStore {
         if (tsQuery.isEmpty()) {
             return List.of();
         }
-        return jdbc.query("SELECT " + HIT_COLUMNS + ", 1 - (c.embedding <=> ?::vector) AS cosine, "
-                        + "ts_rank_cd(c.tsv, q.query) AS kw "
-                        + "FROM chunks c, to_tsquery('english', ?) AS q(query) "
-                        + "WHERE c.active AND c.space_id = ANY(string_to_array(?, ',')) AND c.tsv @@ q.query "
-                        + "ORDER BY kw DESC LIMIT ?",
+        // Rank first, then compute cosine only for the k survivors: an OR query can match thousands
+        // of rows, and a 384-1536-dim distance per matched row dominated latency (38 ms -> see
+        // docs/PERFORMANCE.md).
+        return jdbc.query("SELECT " + HIT_COLUMNS + ", 1 - (c.embedding <=> ?::vector) AS cosine, top.kw "
+                        + "FROM (SELECT c.id, ts_rank_cd(c.tsv, q.query) AS kw "
+                        + "      FROM chunks c, to_tsquery('english', ?) AS q(query) "
+                        + "      WHERE c.active AND c.space_id = ANY(string_to_array(?, ',')) AND c.tsv @@ q.query "
+                        + "      ORDER BY kw DESC LIMIT ?) top "
+                        + "JOIN chunks c ON c.id = top.id ORDER BY top.kw DESC",
                 JdbcKnowledgeStore::hit, toVectorLiteral(queryEmbedding), tsQuery, joinSpaces(spaces), k);
     }
 
