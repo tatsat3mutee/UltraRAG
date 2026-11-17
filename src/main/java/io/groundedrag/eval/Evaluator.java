@@ -46,8 +46,9 @@ public class Evaluator {
             List<String> misses) {
     }
 
+    /** {@code faithfulness} is null when no judge model was configured. */
     public record AnswerScores(int answerable, double factAccuracy, double groundedRate, int unanswerable,
-            double abstentionAccuracy, double falseAbstentionRate, List<String> failures) {
+            double abstentionAccuracy, double falseAbstentionRate, Double faithfulness, List<String> failures) {
     }
 
     private final KnowledgeStore store;
@@ -134,7 +135,13 @@ public class Evaluator {
     }
 
     public AnswerScores answers(List<EvalCase> cases, RagService rag) {
+        return answers(cases, rag, null);
+    }
+
+    public AnswerScores answers(List<EvalCase> cases, RagService rag, FaithfulnessJudge judge) {
         int answerable = 0, correct = 0, grounded = 0, unanswerable = 0, abstained = 0, falseAbstain = 0;
+        double faithfulnessSum = 0;
+        int judged = 0;
         List<String> failures = new ArrayList<>();
         for (EvalCase c : cases) {
             ChatAnswer a = rag.ask(new RagService.Question("eval", spaces(c), c.question(), null));
@@ -153,6 +160,12 @@ public class Evaluator {
                 }
                 if (declined) {
                     falseAbstain++;
+                } else if (judge != null) {
+                    FaithfulnessJudge.Verdict v = judge.judge(a);
+                    faithfulnessSum += v.score();
+                    judged++;
+                    v.claims().stream().filter(cl -> !cl.supported())
+                            .forEach(cl -> failures.add(c.id() + " unsupported claim: " + cl.claim()));
                 }
             } else {
                 unanswerable++;
@@ -164,7 +177,8 @@ public class Evaluator {
             }
         }
         return new AnswerScores(answerable, ratio(correct, answerable), ratio(grounded, answerable), unanswerable,
-                ratio(abstained, unanswerable), ratio(falseAbstain, answerable), failures);
+                ratio(abstained, unanswerable), ratio(falseAbstain, answerable),
+                judge == null || judged == 0 ? null : faithfulnessSum / judged, failures);
     }
 
     public static String markdown(List<RetrievalScores> retrieval, AnswerScores answers, String setup) {
@@ -187,8 +201,11 @@ public class Evaluator {
                     | False abstentions | %.3f |
                     | Unanswerable questions | %d |
                     | Correctly declined | %.3f |
+                    | Faithfulness (LLM judge) | %s |
                     """, answers.answerable(), answers.factAccuracy(), answers.groundedRate(),
-                    answers.falseAbstentionRate(), answers.unanswerable(), answers.abstentionAccuracy()));
+                    answers.falseAbstentionRate(), answers.unanswerable(), answers.abstentionAccuracy(),
+                    answers.faithfulness() == null ? "not run (no judge model)"
+                            : String.format(Locale.ROOT, "%.3f", answers.faithfulness())));
             if (!answers.failures().isEmpty()) {
                 sb.append("\nFailures: ").append(String.join("; ", answers.failures())).append('\n');
             }

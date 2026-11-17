@@ -13,6 +13,9 @@ import io.groundedrag.retrieval.Reranker;
 import io.groundedrag.retrieval.RetrievalMode;
 import io.groundedrag.store.KnowledgeStore;
 import org.slf4j.Logger;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.beans.factory.ObjectProvider;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
@@ -39,9 +42,12 @@ class EvalRunner implements ApplicationRunner {
     private final RagService rag;
     private final RagProperties props;
     private final ConfigurableApplicationContext context;
+    private final ObjectProvider<ChatModel> chatModel;
 
     EvalRunner(KnowledgeStore store, IngestionService ingestion, Embedder embedder, HybridRetriever retriever,
-            Reranker reranker, RagService rag, RagProperties props, ConfigurableApplicationContext context) {
+            Reranker reranker, RagService rag, RagProperties props, ConfigurableApplicationContext context,
+            ObjectProvider<ChatModel> chatModel) {
+        this.chatModel = chatModel;
         this.store = store;
         this.ingestion = ingestion;
         this.embedder = embedder;
@@ -50,6 +56,12 @@ class EvalRunner implements ApplicationRunner {
         this.rag = rag;
         this.props = props;
         this.context = context;
+    }
+
+    /** Uses the configured chat model as judge; ideally point it at a stronger model than the generator. */
+    private FaithfulnessJudge judge() {
+        ChatModel model = chatModel.getIfAvailable();
+        return model == null ? null : new FaithfulnessJudge(ChatClient.create(model));
     }
 
     @Override
@@ -61,7 +73,7 @@ class EvalRunner implements ApplicationRunner {
         String report = Evaluator.markdown(
                 List.of(ev.retrieval(cases, RetrievalMode.HYBRID, k), ev.retrieval(cases, RetrievalMode.VECTOR, k),
                         ev.retrieval(cases, RetrievalMode.KEYWORD, k)),
-                ev.answers(cases, rag),
+                ev.answers(cases, rag, judge()),
                 "Setup: %d documents, %d questions, embedding=%s, reranker=%s, generator=%s, k=%d"
                         .formatted(docs, cases.size(), embedder.modelName(), reranker.name(),
                                 props.generation().provider(), k));
