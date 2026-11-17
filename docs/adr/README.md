@@ -11,4 +11,5 @@ Short records of decisions that shaped the design: context, decision, alternativ
 | [0005](0005-confidence-and-abstention.md) | Confidence policy and abstention without an LLM call |
 | [0006](0006-versioned-ingestion-and-state.md) | Versioned ingestion, corpus-version cache keys, where state lives |
 | [0007](0007-verify-every-answer.md) | Deterministic verification on every answer; LLM judge offline |
-| [0008](0008-tenancy-from-credentials.md) | Tenancy derived from credentials, failing closed |
+| [0008](0008-tenancy-from-credentials.md) | Tenancy derived from credentials (API keys, OIDC/JWT), failing closed; per-caller rate limits |
+| [0009](0009-enforced-quality-gates.md) | Quality enforced by the build: architecture rules, store contracts, eval gate, coverage |

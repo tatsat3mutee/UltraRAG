@@ -45,6 +45,11 @@ Profiles combine, for example `postgres,openai,rerank`.
 | `ingestion.allowed-extensions` | pdf, docx, doc, pptx, html, htm, md, markdown, txt, csv | Upload allow-list |
 | `conversation.max-turns` / `max-conversations` | 6 / 10000 | Conversation memory bounds |
 | `security.api-keys[]` | two dev keys | `{name, key, spaces[]}`; keys must be at least 16 characters; `*` is a wildcard |
+| `security.jwt.issuer-uri` | | OIDC issuer (Keycloak realm, Okta, Entra ID). Enables bearer tokens; signing keys come from the issuer's JWKS |
+| `security.jwt.hmac-secret` | | Alternative to issuer-uri: shared HS256 secret (≥ 32 bytes) for service-to-service calls and tests |
+| `security.jwt.audience` | | When set, tokens must contain this audience |
+| `security.jwt.spaces-claim` | `spaces` | Claim holding the caller's spaces: a list, or a space/comma separated string |
+| `rate-limit.enabled` / `requests-per-minute` / `burst` | true / 30 / 10 | Per-caller token bucket on chat and upload |
 | `eval.run` | `false` | Run the evaluation and exit (docs/EVALUATION.md) |
 
 **Production checklist:**

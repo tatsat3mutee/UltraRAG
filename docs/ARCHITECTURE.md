@@ -63,7 +63,7 @@ Key properties:
 
 1. **History → standalone question.** For follow-ups only; first questions skip the LLM call. Everything downstream (embedding, cache key, retrieval, trace) uses the standalone form.
 2. **Cache lookup.** The scope is `space@corpusVersion` for each searched space. A hit returns a copy with a new answer id, and the answer is still traced.
-3. **Hybrid retrieval.** pgvector HNSW (cosine) and Postgres full-text search (terms ORed, ranked by `ts_rank_cd`) each return 30 candidates. They are fused with RRF (k = 60), near-duplicates are dropped (Jaccard ≥ 0.9), then the results are reranked to the top 6.
+3. **Hybrid retrieval.** pgvector HNSW (cosine) and Postgres full-text search (terms ORed, ranked by `ts_rank_cd`) each return 30 candidates. The two legs run concurrently on virtual threads. They are fused with RRF (k = 60), near-duplicates are dropped (Jaccard ≥ 0.9), then the results are reranked to the top 6.
 4. **Confidence.** Without a reranker this is evidence coverage; with a cross-encoder it is the cross-encoder's score ([ADR 5](adr/0005-confidence-and-abstention.md)).
    - If confidence is LOW or NONE, the question is reformulated and retrieval runs once more; the better result is kept.
    - If confidence is still NONE, the service declines without calling the LLM.
@@ -108,6 +108,21 @@ That way a small space still returns k results instead of being starved by the p
 | LLM during streaming | An `error` SSE event is sent and the stream closes cleanly |
 | Ingestion queue full | `503` problem detail; the version is marked FAILED with "retry later" |
 | Process crash mid-ingest | On startup, interrupted versions are marked FAILED and their chunks cleaned up |
+
+## Security
+
+```mermaid
+flowchart LR
+  R[Request] --> K{X-API-Key?}
+  K -- valid --> C[Caller]
+  R --> B{Bearer JWT?}
+  B -- "valid signature, issuer, expiry, audience" --> J[JwtCallerConverter<br/>spaces claim] --> C
+  C --> L[RateLimitFilter<br/>bucket per caller] --> A[SpaceAuthorizer<br/>requested ⊆ granted, else 403]
+```
+
+Both mechanisms produce the same `Caller`, so controllers, authorisation, traces and rate limits
+never branch on how someone authenticated. The rate limit applies only to chat and upload, the
+endpoints that spend model budget.
 
 ## Observability
 

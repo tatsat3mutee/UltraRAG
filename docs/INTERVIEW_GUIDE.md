@@ -97,6 +97,25 @@ ingest and query is a real bug I've seen. Multi-space filters use `= ANY`, never
 and a contract test proves it on both stores. Traces and conversation memory are per principal.
 (ADR 0008)
 
+**How do users authenticate? Is it SSO-ready?**
+Two ways in, one identity out. API keys are for services. For users there are OIDC bearer tokens
+from Keycloak, Okta or Entra ID: issuer, expiry and audience are validated against the issuer's
+JWKS, and the spaces come from a claim the identity provider fills from group membership. Both
+paths produce the same `Caller`, so nothing downstream branches on auth type. A token without the
+claim gets nothing. Tests cover expired, forged and wrong-audience tokens. (ADR 0008)
+
+**How do you stop one tenant from burning the LLM budget?**
+A token bucket per authenticated caller on chat and upload only, the endpoints that cost money.
+It is keyed by caller, not IP, because behind a load balancer everyone shares an IP. Over the
+limit the response is `429` with `Retry-After`. Buckets are in-process; for a global limit across
+replicas they'd move to Redis.
+
+**How do you keep the architecture from rotting?**
+ArchUnit rules in the build: no Spring web or security types in domain packages, only the store
+touches JDBC, no package cycles. The first run found two real cycles: retrieval and security were
+reading the Spring properties tree. I fixed them by giving each package its own settings types,
+mapped in the composition root. Coverage is gated at 85% (currently about 93%). (ADR 0009)
+
 **How do follow-up questions work?**
 History plus the follow-up goes to the LLM, which returns a standalone question. Retrieval,
 caching and tracing all use that form. First questions skip the call to save latency. Offline,
@@ -124,10 +143,26 @@ request and aborted the response mid-chunk. MockMvc doesn't run that re-dispatch
 filter chain, which is why it passed. The fix is a one-line dispatcher-type rule. The real lesson
 is the test: I added one that streams over a real socket, and confirmed it fails without the fix.
 
+**Tell me about a performance problem you found.**
+The benchmark showed 36 ms p50 retrieval on Postgres with about 9k chunks, so I split it by leg
+and ran `EXPLAIN ANALYZE`:
+1. **Keyword search was 38 ms.** The OR query matched thousands of rows, and I was computing the
+   384-dimension cosine distance for every matched row before sorting. Ranking in a subquery and
+   computing cosine only for the top 30 brought it to about 10 ms.
+2. **The two legs ran one after the other.** Running them concurrently on virtual threads made
+   retrieval cost the slower leg.
+3. **An apparent 22 ms vector search was JIT warm-up** in my own benchmark: Postgres was measured
+   first. A proper warm-up showed 2 ms. Measuring the measurement matters.
+
+The result was 36 ms to 12.5 ms p50. The same `EXPLAIN` session proved why the iterative scan
+setting is needed. Without it, filtered HNSW returned 0 of 30 rows, because the space filter
+removed all 40 candidates the index produced. (docs/PERFORMANCE.md)
+
 **What would you do next?**
-1. Run the evaluation with real models and a reranker, and grow the golden set from traces.
-2. An LLM-as-judge faithfulness sample in CI (nightly, not on every PR).
-3. OAuth2 and SSO group-to-space mapping, and per-document ACLs as a store pre-filter.
+1. Run the evaluation with real models, a reranker and the faithfulness judge, and grow the golden
+   set from traces.
+2. Run the judged evaluation nightly in CI, and add answer relevance.
+3. Per-document ACLs as a store pre-filter, and Redis-backed rate limits and cache for multiple replicas.
 4. Connectors (Confluence, SharePoint) with scheduled re-sync and deletion.
 5. Redis for memory and cache, and a queue for ingestion when scaling out.
 
@@ -137,8 +172,11 @@ is the test: I added one that streams over a real socket, and confirmed it fails
 - **Evaluation set:** 37 golden questions, 8 documents, 2 spaces.
 - **Offline results:** hybrid recall@6 1.0 and MRR 0.89; 3/3 off-topic declined; 3/34 false
   abstentions, all paraphrases.
-- **Tests:** about 80 executions across unit, contract (in-memory and Postgres), API, socket-level
-  streaming and the evaluation gate.
+- **Tests:** 100+ executions across unit, contract (in-memory and Postgres), API (including JWT and
+  rate limits), architecture rules, socket-level streaming and the evaluation gate. Line coverage
+  is about 93%.
+- **Latency (offline models, about 9k chunks, Postgres):** retrieval 12.5 ms p50 and 36 ms p95;
+  vector search 2 ms; keyword search 10 ms. Down from 36 ms p50 before profiling.
 
 ## Live demo script (5 minutes)
 1. `./mvnw spring-boot:run`, open the UI, connect with the dev key, and upload `eval/corpus/product/*.md`.

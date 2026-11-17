@@ -22,6 +22,12 @@ Each question lists its expected source document(s) and facts the answer must co
 
 **End-to-end metrics:**
 - **Fact accuracy:** the share of answers that contain every expected fact.
+- **Faithfulness (LLM judge, real-model runs only):** `FaithfulnessJudge` splits each answer into
+  atomic claims and asks the judge model whether the sources support each one. It returns a typed
+  verdict through Spring AI structured output. The score is supported claims divided by all claims,
+  and unsupported claims are listed in the report. It catches what the deterministic verifier
+  can't: unsupported statements that contain no number. Point it at a stronger model than the
+  generator, because a judge has its own error rate.
 - **Grounded rate:** the share of answers that pass the verifier.
 - **False abstention rate:** answerable questions that were declined.
 - **Correct abstention rate:** unanswerable questions that were declined.
@@ -112,15 +118,15 @@ exits. Use an empty database; the runner is not meant for production data.
 The real-model numbers are not checked in yet. The build environment for this commit had no model
 access, so the table above is the offline baseline only. Fill in this table once you've run it:
 
-| Configuration | Recall@6 | MRR | Fact accuracy | False abstentions | Correctly declined |
-|---|---|---|---|---|---|
-| openai (text-embedding-3-small + gpt-4.1-mini), no reranker | | | | | |
-| openai + bge-reranker-base | | | | | |
-| ollama (nomic-embed-text + llama3.2) + reranker | | | | | |
+| Configuration | Recall@6 | MRR | Fact accuracy | Faithfulness | False abstentions | Correctly declined |
+|---|---|---|---|---|---|---|
+| openai (text-embedding-3-small + gpt-4.1-mini), no reranker | | | | | | |
+| openai + bge-reranker-base | | | | | | |
+| ollama (nomic-embed-text + llama3.2) + reranker | | | | | | |
 
 ## Next steps for the evaluation
 - **Grow the set** to 150+ questions, mined from production traces.
-- **Add an LLM-as-judge faithfulness score** on a sample (claims supported by the cited sources),
-  plus answer relevance.
+- **Add answer relevance** next to faithfulness, and run the judged evaluation nightly rather than
+  on every pull request.
 - **Track metrics per question type,** so a regression on identifiers is not hidden by an
   improvement on paraphrases.

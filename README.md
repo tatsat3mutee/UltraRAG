@@ -22,14 +22,17 @@ record (ADR).
 | Answers off-topic questions with confident nonsense | Confidence policy: decline without calling the LLM when evidence is missing; caveat when it is weak; one corrective re-query first | `RagService`, [ADR 5](docs/adr/0005-confidence-and-abstention.md) |
 | Follow-up questions ("and for annual plans?") retrieve nothing | Follow-ups are rewritten into standalone questions before retrieval and caching | `QueryRewriter` |
 | Cache serves answers about content that changed | Cache key includes a per-space corpus version that every ingest/delete bumps | `SemanticCache` |
-| Tenant isolation trusts a request header | Spaces come from the authenticated key; requests for other spaces get 403 (fails closed) | `SpaceAuthorizer`, [ADR 8](docs/adr/0008-tenancy-from-credentials.md) |
+| Tenant isolation trusts a request header | Spaces come from the authenticated caller (API key, or an OIDC/JWT claim filled by your identity provider); requests for other spaces get 403 (fails closed) | `SpaceAuthorizer`, `JwtCallerConverter`, [ADR 8](docs/adr/0008-tenancy-from-credentials.md) |
+| One tenant burns the shared LLM budget | Per-caller token bucket on chat and upload, `429` with `Retry-After` | `RateLimitFilter` |
 | Multi-space search silently ANDs filters | `= ANY(...)` filters, covered by a contract test on both stores | `KnowledgeStoreContract` |
+| Small tenants get zero vector hits (filtered HNSW returns its 40 nearest rows, the filter removes them all) | pgvector iterative scan; demonstrated with `EXPLAIN ANALYZE`: 0 rows without it, 30 rows in 2.2 ms with it | `JdbcKnowledgeStore`, [PERFORMANCE](docs/PERFORMANCE.md) |
 | Re-upload deletes the old version before the new one is ready | Versioned ingestion: the old version serves until the new one is fully indexed, then one transaction swaps them | `IngestionService`, [ADR 6](docs/adr/0006-versioned-ingestion-and-state.md) |
 | Embedding model changed, old vectors silently incomparable | Model name stored per document version; startup check warns; dimension mismatch fails fast | `Embedder`, `StartupChecks` |
 | PII ends up in the index, the cache and the LLM provider | Redacted at ingest (cards only when Luhn-valid) | `PiiRedactor` |
 | Config flags that do nothing | Typed `@ConfigurationProperties`; every value is read by code | `RagProperties` |
 | "Quality dashboard" with placeholder values | Each answer persists a trace with real chunk ids, scores, verification and per-stage timings; feedback attaches to it | `AnswerTrace` |
-| Nobody knows if a change made retrieval worse | A golden-set evaluation runs in CI and fails the build below baseline | `RetrievalQualityGateTest`, [EVALUATION](docs/EVALUATION.md) |
+| Nobody knows if a change made retrieval worse | A golden-set evaluation runs in CI and fails the build below baseline; an LLM-as-judge faithfulness score runs offline | `RetrievalQualityGateTest`, `FaithfulnessJudge`, [EVALUATION](docs/EVALUATION.md) |
+| The architecture diagram drifts from the code | ArchUnit rules fail the build on layering violations and package cycles | `ArchitectureTest`, [ADR 9](docs/adr/0009-enforced-quality-gates.md) |
 
 ## Architecture
 
@@ -111,7 +114,8 @@ All profiles and properties: [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 | `POST` | `/api/v1/answers/{id}/feedback` | `{rating: 1 or -1, comment?}` |
 | `GET` | `/actuator/health`, `/actuator/prometheus` | Probes and metrics (`rag.stage`, `rag.answers`, `rag.ingest`) |
 
-All `/api` calls need an `X-API-Key` header. Errors are RFC 9457 problem details.
+All `/api` calls need either an `X-API-Key` header or, when `rag.security.jwt.*` is configured,
+an `Authorization: Bearer <JWT>` from your identity provider. Errors are RFC 9457 problem details.
 
 ## Evaluation
 
@@ -137,15 +141,31 @@ here. That is expected, and it is reported as measured rather than hidden. The s
 against real models with one flag. Method, the confidence-calibration analysis, and how to
 reproduce: [docs/EVALUATION.md](docs/EVALUATION.md).
 
-## Tests
+## Performance
 
-80 tests run with `./mvnw verify` (the store contract runs twice):
+Service overhead with offline models (so model latency is excluded), on 4 CPUs:
 
-- **Unit tests** for each pipeline component.
-- **One store contract** run against both the in-memory store and real Postgres + pgvector (Testcontainers, which also exercises the Flyway migration).
-- **API tests** through MockMvc.
+| Store | Chunks | Retrieve p50 / p95 | Full answer p50 / p95 |
+|---|---|---|---|
+| Postgres (pgvector HNSW + GIN) | 9,250 | 12.5 / 36.3 ms | 18.5 / 57.1 ms |
+| In-memory | 9,250 | 10.4 / 16.3 ms | 27.5 / 44.2 ms |
+
+Profiling with `EXPLAIN ANALYZE` cut Postgres retrieval p50 from 36 ms to 12.5 ms. Keyword
+search computed cosine distance for every matched row, and the two search legs ran one after the
+other. Method, the 46k-chunk run, and the iterative-scan evidence: [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+
+## Quality gates
+
+`./mvnw verify` (CI on every push) runs 100+ tests and fails the build on any of these:
+
+- **Architecture rules (ArchUnit):** domain packages carry no Spring web or security types, only
+  the store touches JDBC, and there are no package cycles.
+- **Store contracts:** the same tests run against the in-memory store and real Postgres + pgvector
+  (Testcontainers, which also exercises the Flyway migration and its indexes).
+- **API tests**, including JWT validation (expired, forged, wrong audience) and rate limiting.
 - **A streaming test over a real socket.** It catches the SSE/async-dispatch security bug that MockMvc cannot.
-- **The evaluation quality gate.**
+- **The evaluation quality gate** on the golden set.
+- **Line coverage ≥ 85%** (JaCoCo; currently about 93%).
 
 ## Project layout
 
@@ -159,12 +179,13 @@ src/main/java/io/groundedrag/
   chat/          RagService pipeline, conversation memory, API response model
   cache/         semantic cache with corpus-version invalidation
   observability/ answer traces and feedback
-  security/      API-key authentication, space authorisation
+  security/      API-key and JWT authentication, space authorisation, rate limiting
   eval/          golden-set evaluator and runner
   config/        composition root and typed properties
   web/           REST + SSE controllers, problem details
 eval/            golden set and fictional corpus
-docs/            architecture, ADRs, evaluation, configuration, interview guide
+docs/            architecture, ADRs, evaluation, performance, configuration, interview guide
+scripts/         one-time GitHub repository consolidation
 ```
 
 ## Known limitations
@@ -174,5 +195,5 @@ docs/            architecture, ADRs, evaluation, configuration, interview guide
 - Scanned PDFs need OCR, which is not included.
 - The offline profile cannot handle paraphrases. That is the measured case for running the
   cross-encoder profile ([EVALUATION](docs/EVALUATION.md)).
-- API keys are configured statically. For SSO, swap the filter for an OAuth2 resource server
-  and map a token claim to spaces; nothing downstream changes.
+- Rate-limit buckets are per instance; use Redis (Bucket4j) for a global limit across replicas.
+- Access control is per space. Per-document ACLs would be a pre-filter in the store.

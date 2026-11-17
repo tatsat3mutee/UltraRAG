@@ -24,26 +24,32 @@ Forks with no commits of your own. They add noise and suggest the work is someon
 | UltraRAG | **Delete after moving grounded-rag to its own repo.** grounded-rag currently lives on a branch of this fork (see below) |
 | ApeRAG, RAG_Techniques, Advanced_Rag_Codes, scalable-rag-pipeline, enterprise_document_chat, enterprise-itsm-graph-rag, arxiv-paper-curator | **Delete** (use a star or a bookmark if you want to keep a reference) |
 
-## Moving grounded-rag into its own repository
+## Doing it: one script
 
-The code was developed on branch `claude/youthful-carson-bs5ulu` of the UltraRAG fork. That branch
-contains only this project's history, so it can be pushed as-is. Create an empty repository named
-`grounded-rag` on GitHub, then:
+`scripts/consolidate-repos.sh` does all of the above with the GitHub CLI:
+1. Creates `grounded-rag` and pushes this project's history to its `main`.
+2. Checks that the new repo really contains the code.
+3. Archives the superseded repositories.
+4. Deletes the unmodified forks.
+
+It runs dry by default. You need to run it yourself: the session that built this project could
+edit files in the attached repositories but had no permission to create, archive or delete
+repositories.
 
 ```bash
-git clone --single-branch --branch claude/youthful-carson-bs5ulu https://github.com/tatsat3mutee/UltraRAG grounded-rag
+gh auth refresh -h github.com -s delete_repo
 ```
 
 ```bash
-cd grounded-rag && git remote set-url origin https://github.com/tatsat3mutee/grounded-rag.git
+bash scripts/consolidate-repos.sh
 ```
 
 ```bash
-git push -u origin claude/youthful-carson-bs5ulu:main
+bash scripts/consolidate-repos.sh --apply
 ```
 
-Then delete the UltraRAG fork. Archiving is reversible in Settings → General → Danger Zone.
-Deletion is not, so archive first if unsure.
+Archiving is reversible (Settings → General). Deleting is not, which is why only unmodified forks
+are deleted and the UltraRAG fork goes only after the copy is verified.
 
 ## Profile hygiene
 - Pin grounded-rag and the thesis repo.
